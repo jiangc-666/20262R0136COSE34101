@@ -88,6 +88,7 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->priority = 5;
 
   release(&ptable.lock);
 
@@ -198,6 +199,7 @@ fork(void)
   }
   np->sz = curproc->sz;
   np->parent = curproc;
+  np->priority = curproc->priority;
   *np->tf = *curproc->tf;
 
   // Clear %eax so that fork returns 0 in the child.
@@ -545,7 +547,13 @@ setnice(int pid, int nice)
     /* ******************** */
     /* * WRITE YOUR CODE    */
     /* ******************** */
-
+for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+  if(p->pid == pid){
+    p->priority = nice;
+    release(&ptable.lock);
+    return 0;
+  }
+}
     release(&ptable.lock);
     return -1;
 }
@@ -559,7 +567,13 @@ getnice(int pid)
     /* ******************** */
     /* * WRITE YOUR CODE    */
     /* ******************** */
-
+for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+  if(p->pid == pid){
+    int nice = p->priority;
+    release(&ptable.lock);
+    return nice;
+  }
+}
     release(&ptable.lock);
     return -1;
 }
@@ -574,7 +588,30 @@ ps(void)
     /* ******************** */
     /* * WRITE YOUR CODE    */
     /* ******************** */
+for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+  int ppid;
+  char *state;
 
+  if(p->state == UNUSED)
+    continue;
+
+  if(p->parent)
+    ppid = p->parent->pid;
+  else
+    ppid = -1;
+
+  if(p->state == RUNNING)
+    state = "RUNNING";
+  else if(p->state == RUNNABLE)
+    state = "RUNNABLE";
+  else if(p->state == SLEEPING)
+    state = "SLEEPING";
+  else
+    continue;
+
+  cprintf("%s\t%d\t%d\t%d\t%d\t%s\n",
+          p->name, p->pid, ppid, p->sz, p->priority, state);
+}
     release(&ptable.lock);
     return;
 }

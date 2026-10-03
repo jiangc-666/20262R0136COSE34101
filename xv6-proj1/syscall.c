@@ -90,6 +90,9 @@ extern int sys_exit(void);
 extern int sys_fork(void);
 extern int sys_fstat(void);
 extern int sys_getpid(void);
+extern int sys_setnice(void);
+extern int sys_getnice(void);
+extern int sys_ps(void);
 extern int sys_kill(void);
 extern int sys_link(void);
 extern int sys_mkdir(void);
@@ -126,6 +129,9 @@ static int (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
+[SYS_setnice] sys_setnice,
+[SYS_getnice] sys_getnice,
+[SYS_ps] sys_ps,
 };
 
 void
