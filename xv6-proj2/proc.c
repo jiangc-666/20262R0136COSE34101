@@ -212,6 +212,11 @@ fork(void)
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
+  if(curproc->priority >= 15)
+    np->priority = curproc->priority / 2;
+  else
+    np->priority = curproc->priority + 1;
+
   pid = np->pid;
 
   acquire(&ptable.lock);
