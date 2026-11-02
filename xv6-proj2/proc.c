@@ -10,6 +10,8 @@
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
+  struct proc *ready[NPROC];
+  int ready_count;
 } ptable;
 
 static struct proc *initproc;
@@ -19,7 +21,62 @@ extern void forkret(void);
 extern void trapret(void);
 
 static void wakeup1(void *chan);
+static void
+enqueue(struct proc *p)
+{
+  int i;
 
+  if(ptable.ready_count >= NPROC)
+    panic("ready queue full");
+
+  i = ptable.ready_count;
+
+  while(i > 0 &&
+        (ptable.ready[i-1]->priority > p->priority ||
+        (ptable.ready[i-1]->priority == p->priority &&
+         ptable.ready[i-1]->pid < p->pid))){
+    ptable.ready[i] = ptable.ready[i-1];
+    i--;
+  }
+
+  ptable.ready[i] = p;
+  ptable.ready_count++;
+}
+static struct proc*
+dequeue(void)
+{
+  struct proc *p;
+  int i;
+
+  if(ptable.ready_count == 0)
+    return 0;
+
+  p = ptable.ready[0];
+
+  for(i = 1; i < ptable.ready_count; i++)
+    ptable.ready[i-1] = ptable.ready[i];
+
+  ptable.ready_count--;
+  ptable.ready[ptable.ready_count] = 0;
+
+  return p;
+}
+static void
+remove_ready(struct proc *p)
+{
+  int i, j;
+
+  for(i = 0; i < ptable.ready_count; i++){
+    if(ptable.ready[i] == p){
+      for(j = i + 1; j < ptable.ready_count; j++)
+        ptable.ready[j-1] = ptable.ready[j];
+
+      ptable.ready_count--;
+      ptable.ready[ptable.ready_count] = 0;
+      return;
+    }
+  }
+}
 void
 pinit(void)
 {
@@ -151,6 +208,7 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
+  enqueue(p);
 
   release(&ptable.lock);
 }
@@ -222,8 +280,12 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  enqueue(np);
 
-  release(&ptable.lock);
+    release(&ptable.lock);
+
+  if(np->priority < curproc->priority)
+    yield();
 
   return pid;
 }
@@ -339,9 +401,11 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
+    p = dequeue();
+    if(p == 0){
+      release(&ptable.lock);
+      continue;
+    }
 
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
@@ -352,11 +416,9 @@ scheduler(void)
 
       swtch(&(c->scheduler), p->context);
       switchkvm();
-
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
-    }
     release(&ptable.lock);
 
   }
@@ -394,6 +456,7 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   myproc()->state = RUNNABLE;
+  enqueue(myproc());
   sched();
   release(&ptable.lock);
 }
@@ -467,8 +530,10 @@ wakeup1(void *chan)
   struct proc *p;
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
-      p->state = RUNNABLE;
+  if(p->state == SLEEPING && p->chan == chan){
+    p->state = RUNNABLE;
+    enqueue(p);
+  }
 }
 
 // Wake up all processes sleeping on chan.
@@ -493,8 +558,10 @@ kill(int pid)
     if(p->pid == pid){
       p->killed = 1;
       // Wake process from sleep if necessary.
-      if(p->state == SLEEPING)
+      if(p->state == SLEEPING){
         p->state = RUNNABLE;
+        enqueue(p);
+      }
       release(&ptable.lock);
       return 0;
     }
@@ -547,13 +614,45 @@ setnice(int pid, int nice)
     return -1;
 
   struct proc *p;
+  struct proc *current;
+  int need_yield = 0;
+  int old_priority;
+  int was_outranked = 0;
+
+  current = myproc();
   acquire(&ptable.lock);
   for( p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if(p->pid==pid){
-      p->priority = nice;
-      release(&ptable.lock);
-      return 0;
-    }
+    if(p->pid == pid && p->state != UNUSED && p->state != ZOMBIE){
+      old_priority = p->priority;
+      if(current && ptable.ready_count > 0 &&
+         (ptable.ready[0]->priority < current->priority ||
+          (ptable.ready[0]->priority == current->priority &&
+           ptable.ready[0]->pid > current->pid)))
+        was_outranked = 1;
+
+  if(p->state == RUNNABLE)
+    remove_ready(p);
+
+  p->priority = nice;
+
+  if(p->state == RUNNABLE)
+    enqueue(p);
+
+  if(old_priority != nice && current &&
+    !was_outranked &&
+    ptable.ready_count > 0 &&
+     (ptable.ready[0]->priority < current->priority ||
+      (ptable.ready[0]->priority == current->priority &&
+       ptable.ready[0]->pid > current->pid)))
+    need_yield = 1;
+
+  release(&ptable.lock);
+
+  if(need_yield)
+    yield();
+
+  return 0;
+}
   }
 
   release(&ptable.lock);
