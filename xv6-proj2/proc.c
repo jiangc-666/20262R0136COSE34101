@@ -618,6 +618,8 @@ setnice(int pid, int nice)
   int need_yield = 0;
   int old_priority;
   int was_outranked = 0;
+  struct proc *best_before;
+  struct proc *best_after;
 
   current = myproc();
   acquire(&ptable.lock);
@@ -630,6 +632,8 @@ setnice(int pid, int nice)
            ptable.ready[0]->pid > current->pid)))
         was_outranked = 1;
 
+      best_before = was_outranked ? ptable.ready[0] : current;
+
   if(p->state == RUNNABLE)
     remove_ready(p);
 
@@ -637,14 +641,18 @@ setnice(int pid, int nice)
 
   if(p->state == RUNNABLE)
     enqueue(p);
+  best_after = current;
 
-  if(old_priority != nice && current &&
-    !was_outranked &&
-    ptable.ready_count > 0 &&
+  if(current && ptable.ready_count > 0 &&
      (ptable.ready[0]->priority < current->priority ||
       (ptable.ready[0]->priority == current->priority &&
        ptable.ready[0]->pid > current->pid)))
-    need_yield = 1;
+    best_after = ptable.ready[0];
+
+  if(current && old_priority != nice &&
+    best_before != best_after &&
+    best_after != current)
+  need_yield = 1;
 
   release(&ptable.lock);
 
